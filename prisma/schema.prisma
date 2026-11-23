@@ -1,0 +1,226 @@
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+enum UserRole {
+  REQUESTER
+  AREA_OWNER
+  SAFETY_OFFICER
+  ADMIN
+}
+
+enum PermitType {
+  HOT_WORK
+  CONFINED_SPACE
+  WORKING_AT_HEIGHT
+  ELECTRICAL_LOTO
+  EXCAVATION
+}
+
+enum PermitStatus {
+  DRAFT
+  PENDING_APPROVAL
+  APPROVED
+  ACTIVE
+  SUSPENDED
+  EXPIRED
+  CLOSED
+  CLOSED_VERIFIED
+  CANCELLED
+  REJECTED
+}
+
+enum ApprovalRole {
+  AREA_OWNER
+  SAFETY_OFFICER
+}
+
+enum ApprovalStatus {
+  PENDING
+  APPROVED
+  REJECTED
+}
+
+enum ExtensionStatus {
+  PENDING
+  APPROVED
+  REJECTED
+}
+
+model User {
+  id             String    @id @default(uuid())
+  email          String    @unique
+  passwordHash   String
+  name           String
+  role           UserRole
+  badgeNumber    String?
+  assignedAreaId String?
+  assignedArea   Area?     @relation("AreaOwnerAssignment", fields: [assignedAreaId], references: [id])
+  
+  permitsRequested    Permit[]            @relation("PermitRequester")
+  approvalsGiven      PermitApproval[]    @relation("UserApprovals")
+  auditLogs           AuditLog[]          @relation("UserAuditLogs")
+  extensionRequests   ExtensionRequest[]  @relation("UserExtensionRequests")
+  reviewedExtensions  ExtensionRequest[]  @relation("UserReviewedExtensions")
+  
+  createdAt      DateTime  @default(now())
+  updatedAt      DateTime  @updatedAt
+
+  @@index([role])
+  @@index([assignedAreaId])
+}
+
+model Plant {
+  id        String   @id @default(uuid())
+  code      String   @unique
+  name      String
+  location  String
+  areas     Area[]
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+}
+
+model Area {
+  id        String      @id @default(uuid())
+  code      String
+  name      String
+  plantId   String
+  plant     Plant       @relation(fields: [plantId], references: [id], onDelete: Cascade)
+  equipment Equipment[]
+  permits   Permit[]
+  owners    User[]      @relation("AreaOwnerAssignment")
+  createdAt DateTime    @default(now())
+  updatedAt DateTime    @updatedAt
+
+  @@unique([plantId, code])
+  @@index([plantId])
+}
+
+model Equipment {
+  id        String   @id @default(uuid())
+  tag       String   @unique
+  name      String
+  areaId    String
+  area      Area     @relation(fields: [areaId], references: [id], onDelete: Cascade)
+  permits   Permit[]
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([areaId])
+}
+
+model Permit {
+  id               String       @id @default(uuid())
+  permitNumber     String       @unique
+  permitType       PermitType
+  status           PermitStatus @default(DRAFT)
+  
+  requesterId      String
+  requester        User         @relation("PermitRequester", fields: [requesterId], references: [id])
+  
+  areaId           String
+  area             Area         @relation(fields: [areaId], references: [id])
+  
+  equipmentId      String
+  equipment        Equipment    @relation(fields: [equipmentId], references: [id])
+  
+  contractorName   String
+  workDescription  String
+  
+  plannedStartTime DateTime
+  plannedEndTime   DateTime
+  actualStartTime  DateTime?
+  actualEndTime    DateTime?
+  
+  hazardsIdentified    Json     @default("[]")
+  ppeRequired          Json     @default("[]")
+  precautionsChecklist Json     @default("{}")
+  
+  // Polymorphic type-specific payload validated strictly by permitType schema
+  typeSpecificData     Json     @default("{}")
+  
+  // Closure and site handover notes
+  completionNotes      String?
+  housekeepingVerified Boolean  @default(false)
+  closureVerifiedAt    DateTime?
+  
+  approvals            PermitApproval[]
+  auditLogs            AuditLog[]
+  extensionRequests    ExtensionRequest[]
+  
+  createdAt            DateTime @default(now())
+  updatedAt            DateTime @updatedAt
+
+  @@index([status])
+  @@index([permitType])
+  @@index([requesterId])
+  @@index([areaId])
+  @@index([plannedStartTime, plannedEndTime])
+}
+
+model PermitApproval {
+  id            String         @id @default(uuid())
+  permitId      String
+  permit        Permit         @relation(fields: [permitId], references: [id], onDelete: Cascade)
+  
+  requiredRole  ApprovalRole
+  approverId    String?
+  approver      User?          @relation("UserApprovals", fields: [approverId], references: [id])
+  
+  status        ApprovalStatus @default(PENDING)
+  comment       String?
+  signatureData String?        @db.Text
+  decidedAt     DateTime?
+  
+  createdAt     DateTime       @default(now())
+
+  @@index([permitId])
+  @@index([approverId])
+  @@index([status])
+}
+
+model AuditLog {
+  id         String   @id @default(uuid())
+  permitId   String
+  permit     Permit   @relation(fields: [permitId], references: [id], onDelete: Cascade)
+  
+  actorId    String?
+  actor      User?    @relation("UserAuditLogs", fields: [actorId], references: [id])
+  
+  action     String
+  fromState  String?
+  toState    String?
+  diff       Json?
+  comment    String?
+  timestamp  DateTime @default(now())
+
+  @@index([permitId])
+  @@index([timestamp])
+}
+
+model ExtensionRequest {
+  id                String          @id @default(uuid())
+  permitId          String
+  permit            Permit          @relation(fields: [permitId], references: [id], onDelete: Cascade)
+  
+  requestedById     String
+  requestedBy       User            @relation("UserExtensionRequests", fields: [requestedById], references: [id])
+  
+  additionalHours   Int
+  reason            String
+  status            ExtensionStatus @default(PENDING)
+  
+  reviewedById      String?
+  reviewedBy        User?           @relation("UserReviewedExtensions", fields: [reviewedById], references: [id])
+  reviewedAt        DateTime?
+  
+  createdAt         DateTime        @default(now())
+
+  @@index([permitId])
+  @@index([status])
+}
